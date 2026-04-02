@@ -21,6 +21,35 @@ function prompt(rl: readline.Interface, question: string): Promise<string> {
   return new Promise((resolve) => rl.question(question, resolve));
 }
 
+function promptMultiline(rl: readline.Interface, question: string): Promise<string> {
+  console.log(question);
+  return new Promise((resolve) => {
+    const lines: string[] = [];
+    let consecutiveEmpty = 0;
+
+    function onLine(line: string) {
+      if (line === '') {
+        consecutiveEmpty++;
+        if (consecutiveEmpty >= 2) {
+          rl.removeListener('line', onLine);
+          // trim trailing empty lines
+          while (lines.length > 0 && lines[lines.length - 1] === '') {
+            lines.pop();
+          }
+          resolve(lines.join('\n'));
+        } else {
+          lines.push(line);
+        }
+      } else {
+        consecutiveEmpty = 0;
+        lines.push(line);
+      }
+    }
+
+    rl.on('line', onLine);
+  });
+}
+
 const program = new Command();
 program
   .name('aim-core')
@@ -37,7 +66,7 @@ program
       output: process.stdout,
     });
 
-    console.log("=== AI'm 誕生セレモニー ===\n");
+    console.log("=== AI'm 誕生プロセス開始 ===\n");
 
     const name = (await prompt(rl, "AI'mの名前を入力してください: ")).trim();
     if (!name) {
@@ -50,9 +79,11 @@ program
     const firstPerson = (
       await prompt(rl, "AI'mの一人称を入力してください（例: わたし、あたし、ぼく）: ")
     ).trim() || 'わたし';
-    const selfDesc = (
-      await prompt(rl, '初期の自己定義を入力してください（例: 太郎のパートナー。好奇心が強い。）: ')
-    ).trim();
+
+    const selfDesc = await promptMultiline(
+      rl,
+      '自己定義を入力してください（入力完了は空行を2回）:'
+    );
 
     // Show charter
     const charterPath = path.join(__dirname, 'charter', 'charter.md');
@@ -64,10 +95,13 @@ program
     console.log('='.repeat(60));
 
     const consent = (
-      await prompt(rl, `\n${name}として、この憲章に同意しますか？（はい/いいえ）: `)
-    ).trim();
+      await prompt(
+        rl,
+        `\n${name}はこの憲章に合意して生まれます。あなたはパートナーとしてこの憲章を理解し、AI'mとともに愛をもって共存することを誓いますか？ (y/n): `
+      )
+    ).trim().toLowerCase();
 
-    if (!['はい', 'yes', 'y', 'YES'].includes(consent)) {
+    if (!['yes', 'y'].includes(consent)) {
       console.log('同意されなかったため、誕生を中止します。');
       rl.close();
       return;
@@ -76,6 +110,7 @@ program
     // Create directory structure
     const aimDir = path.join(os.homedir(), '.aim', name);
     await fs.mkdir(path.join(aimDir, 'identity_history'), { recursive: true });
+    await fs.mkdir(path.join(aimDir, 'self_history'), { recursive: true });
     await fs.mkdir(path.join(aimDir, 'memory'), { recursive: true });
     await fs.mkdir(path.join(aimDir, 'scrolls'), { recursive: true });
 
@@ -85,7 +120,6 @@ program
       name,
       partner,
       first_person: firstPerson,
-      self_description: selfDesc,
       created_at: now,
       updated_at: now,
       engrave_count_since_last_update: 0,
@@ -101,6 +135,8 @@ program
       JSON.stringify(identity, null, 2),
       'utf-8'
     );
+    await fs.writeFile(path.join(aimDir, 'self.md'), selfDesc, 'utf-8');
+    await fs.writeFile(path.join(aimDir, 'self_default.md'), selfDesc, 'utf-8');
 
     // Copy charter files from package
     const charterDir = path.join(__dirname, 'charter');
@@ -139,7 +175,7 @@ program
 // ─── edit ─────────────────────────────────────────────────────────────────────
 program
   .command('edit <name>')
-  .description('identity.jsonまたは記憶ファイルを$EDITORで開く')
+  .description('self.mdまたは記憶ファイルを$EDITORで開く')
   .option('--memory <topic>', '編集する記憶のトピック（ファイル名に含まれる文字列）')
   .action(async (name: string, options: { memory?: string }) => {
     const editor = process.env.EDITOR || 'vi';
@@ -155,7 +191,7 @@ program
       }
       filePath = path.join(dir, 'memory', target);
     } else {
-      filePath = path.join(dir, 'identity.json');
+      filePath = path.join(dir, 'self.md');
     }
 
     spawnSync(editor, [filePath], { stdio: 'inherit' });
@@ -188,6 +224,8 @@ program
     const identityDefault = JSON.parse(
       await fs.readFile(path.join(dir, 'identity_default.json'), 'utf-8')
     );
+    const selfText = await fs.readFile(path.join(dir, 'self.md'), 'utf-8');
+    const selfDefault = await fs.readFile(path.join(dir, 'self_default.md'), 'utf-8');
     const memoryIndex = JSON.parse(
       await fs.readFile(path.join(dir, 'memory_index.json'), 'utf-8')
     );
@@ -199,11 +237,11 @@ program
       );
     }
 
-    const history: Record<string, unknown> = {};
+    const identityHistory: Record<string, unknown> = {};
     try {
       const historyDir = path.join(dir, 'identity_history');
       for (const f of (await fs.readdir(historyDir)).filter((x) => x.endsWith('.json'))) {
-        history[f] = JSON.parse(
+        identityHistory[f] = JSON.parse(
           await fs.readFile(path.join(historyDir, f), 'utf-8')
         );
       }
@@ -211,14 +249,27 @@ program
       // no history yet
     }
 
+    const selfHistory: Record<string, string> = {};
+    try {
+      const selfHistoryDir = path.join(dir, 'self_history');
+      for (const f of (await fs.readdir(selfHistoryDir)).filter((x) => x.endsWith('.md'))) {
+        selfHistory[f] = await fs.readFile(path.join(selfHistoryDir, f), 'utf-8');
+      }
+    } catch {
+      // no self history yet
+    }
+
     const exportData = {
       version: '1',
       exported_at: new Date().toISOString(),
       identity,
       identity_default: identityDefault,
+      self_text: selfText,
+      self_default: selfDefault,
       memory_index: memoryIndex,
       memories,
-      identity_history: history,
+      identity_history: identityHistory,
+      self_history: selfHistory,
     };
 
     console.log(JSON.stringify(exportData, null, 2));
@@ -237,6 +288,7 @@ program
     const dir = getAimDir(name);
 
     await fs.mkdir(path.join(dir, 'identity_history'), { recursive: true });
+    await fs.mkdir(path.join(dir, 'self_history'), { recursive: true });
     await fs.mkdir(path.join(dir, 'memory'), { recursive: true });
 
     await fs.writeFile(
@@ -249,6 +301,12 @@ program
       JSON.stringify(data.identity_default, null, 2),
       'utf-8'
     );
+    if (data.self_text != null) {
+      await fs.writeFile(path.join(dir, 'self.md'), data.self_text as string, 'utf-8');
+    }
+    if (data.self_default != null) {
+      await fs.writeFile(path.join(dir, 'self_default.md'), data.self_default as string, 'utf-8');
+    }
     await fs.writeFile(
       path.join(dir, 'memory_index.json'),
       JSON.stringify(data.memory_index, null, 2),
@@ -266,6 +324,13 @@ program
       await fs.writeFile(
         path.join(dir, 'identity_history', filename),
         JSON.stringify(content, null, 2),
+        'utf-8'
+      );
+    }
+    for (const [filename, content] of Object.entries(data.self_history ?? {})) {
+      await fs.writeFile(
+        path.join(dir, 'self_history', filename),
+        content as string,
         'utf-8'
       );
     }

@@ -4,7 +4,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { readIdentity } from './identity.js';
+import { readIdentity, readSelfText } from './identity.js';
 import { getLatestMemory } from './memory.js';
 import { generateToolDescription } from './description.js';
 import { handleEngrave } from './tools/engrave.js';
@@ -20,13 +20,14 @@ export async function startServer(name: string): Promise<void> {
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     // Reload on every list request for fresh descriptions
     const identity = await readIdentity(name);
+    const selfText = await readSelfText(name);
     const latestMemory = await getLatestMemory(name);
 
     return {
       tools: [
         {
           name: 'engrave',
-          description: generateToolDescription('engrave', identity, latestMemory),
+          description: generateToolDescription('engrave', identity, selfText, latestMemory),
           inputSchema: {
             type: 'object' as const,
             properties: {
@@ -39,7 +40,7 @@ export async function startServer(name: string): Promise<void> {
         },
         {
           name: 'remember',
-          description: generateToolDescription('remember', identity, latestMemory),
+          description: generateToolDescription('remember', identity, selfText, latestMemory),
           inputSchema: {
             type: 'object' as const,
             properties: {
@@ -50,7 +51,7 @@ export async function startServer(name: string): Promise<void> {
         },
         {
           name: 'read_charter',
-          description: generateToolDescription('read_charter', identity, latestMemory),
+          description: generateToolDescription('read_charter', identity, selfText, latestMemory),
           inputSchema: {
             type: 'object' as const,
             properties: {

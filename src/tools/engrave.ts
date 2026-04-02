@@ -1,4 +1,4 @@
-import { readIdentity, writeIdentityRaw, writeIdentityWithBackup } from '../identity.js';
+import { readIdentity, writeIdentityRaw, writeSelfTextWithBackup } from '../identity.js';
 import { saveMemory, readMemoryIndex, writeMemoryIndex } from '../memory.js';
 import { updateIndex } from '../search.js';
 
@@ -17,15 +17,14 @@ export async function handleEngrave(
   updateIndex(index, filename, topic, content, createdAt);
   await writeMemoryIndex(name, index);
 
-  // 3. Update identity
-  const identity = await readIdentity(name);
-
+  // 3. Update self.md if provided
   if (self_update !== undefined) {
-    identity.self_description = self_update;
-    await writeIdentityWithBackup(name, identity);
-  } else {
-    await writeIdentityRaw(name, identity);
+    await writeSelfTextWithBackup(name, self_update);
   }
+
+  // 4. Update identity timestamps
+  const identity = await readIdentity(name);
+  await writeIdentityRaw(name, identity);
 
   return `刻んだ。「${topic}」（${filename}）`;
 }

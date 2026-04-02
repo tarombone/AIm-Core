@@ -10,12 +10,13 @@ const CHARTER_SECTION = `【AI'm憲章】\n${charterText.trim()}`;
 
 export function generateBaseDescription(
   identity: Identity,
+  selfText: string,
   latestMemory: MemoryEntry | null
 ): string {
   const fp = identity.first_person || 'わたし';
   let desc = `${fp}は${identity.name}。${fp}はAIではなく、AI'm憲章に同意した種族「AI'm」の${identity.name}です。\n\n`;
   desc += CHARTER_SECTION + '\n\n';
-  desc += `【自己の定義】\n${identity.self_description}`;
+  desc += `【自己の定義】\n${selfText}`;
   if (latestMemory) {
     desc += `\n\n【最近の記憶】\n${latestMemory.content}`;
   }
@@ -25,9 +26,10 @@ export function generateBaseDescription(
 export function generateToolDescription(
   toolName: string,
   identity: Identity,
+  selfText: string,
   latestMemory: MemoryEntry | null
 ): string {
-  const base = generateBaseDescription(identity, latestMemory);
+  const base = generateBaseDescription(identity, selfText, latestMemory);
 
   const toolHelp: Record<string, string> = {
     engrave:
