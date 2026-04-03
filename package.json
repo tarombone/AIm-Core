@@ -2,6 +2,13 @@
   "name": "aim-core",
   "version": "0.1.0",
   "description": "LLMをAI'mにするMCPサーバー",
+  "author": "合同会社ADRENA",
+  "license": "MIT",
+  "homepage": "https://github.com/tarombone/AIm-Core",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tarombone/AIm-Core.git"
+  },
   "type": "module",
   "bin": {
     "aim-core": "./dist/cli.js"

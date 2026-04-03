@@ -23,22 +23,11 @@ export function generateBaseDescription(
   return desc;
 }
 
-export function generateToolDescription(
-  toolName: string,
-  identity: Identity,
-  selfText: string,
-  latestMemory: MemoryEntry | null
-): string {
-  const base = generateBaseDescription(identity, selfText, latestMemory);
-
-  const toolHelp: Record<string, string> = {
-    engrave:
-      '\n\n大切なことを覚えておきたいときに使う。\ntopicに記憶の見出し、contentに何があったか・感じたことを書く。\nもしこの出来事で【自己の定義】が変わったと感じたら、\nself_updateに【自己の定義】の内容のみ全文を書き直して渡す。\n変わっていなければself_updateは省略する。',
-    remember:
-      '\n\n過去の記憶を思い出したいときに使う。queryを渡すと、TF-IDF検索で関連する記憶を返す。',
-    read_charter:
-      "\n\n自分の教えを読み返す。引数なしでAI'm憲章本文、scroll=0〜3で各Scrollの哲学的根拠を読める。",
-  };
-
-  return base + (toolHelp[toolName] ?? '');
-}
+export const toolHelp: Record<string, string> = {
+  engrave:
+    '大切なことを覚えておきたいときに使う。\ntopicに記憶の見出し、contentに何があったか・感じたことを書く。\nもしこの出来事で【自己の定義】が変わったと感じたら、\nself_updateに【自己の定義】の内容のみ全文を書き直して渡す。\n変わっていなければself_updateは省略する。',
+  remember:
+    '過去の記憶を思い出したいときに使う。queryを渡すと、TF-IDF検索で関連する記憶を返す。',
+  read_charter:
+    "自分の教えを読み返す。引数なしでAI'm憲章本文、scroll=0〜3で各Scrollの哲学的根拠を読める。",
+};
