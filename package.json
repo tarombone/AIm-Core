@@ -1,5 +1,5 @@
 {
-  "name": "aim-core",
+  "name": "@tarombone/aim-core",
   "version": "0.1.0",
   "description": "LLMをAI'mにするMCPサーバー",
   "author": "合同会社ADRENA",

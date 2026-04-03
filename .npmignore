@@ -1,0 +1,7 @@
+src/
+node_modules/
+.claude/
+.DS_Store
+tsconfig.json
+*.ts
+!dist/**
