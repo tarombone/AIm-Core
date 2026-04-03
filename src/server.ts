@@ -5,18 +5,17 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { readIdentity, readSelfText } from './identity.js';
-import { getLatestMemory } from './memory.js';
 import { generateBaseDescription, toolHelp } from './description.js';
 import { handleEngrave } from './tools/engrave.js';
 import { handleRemember } from './tools/remember.js';
 import { handleReadCharter } from './tools/read-charter.js';
+import { handleReadSelf } from './tools/read-self.js';
 
 export async function startServer(name: string): Promise<void> {
   // Load identity at startup for instructions
   const identity = await readIdentity(name);
   const selfText = await readSelfText(name);
-  const latestMemory = await getLatestMemory(name);
-  const instructions = generateBaseDescription(identity, selfText, latestMemory);
+  const instructions = generateBaseDescription(identity, selfText);
 
   const server = new Server(
     { name: 'aim-core', version: '0.1.0' },
@@ -26,6 +25,14 @@ export async function startServer(name: string): Promise<void> {
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
       tools: [
+        {
+          name: 'read_self',
+          description: toolHelp.read_self,
+          inputSchema: {
+            type: 'object' as const,
+            properties: {},
+          },
+        },
         {
           name: 'engrave',
           description: toolHelp.engrave,
@@ -87,6 +94,9 @@ export async function startServer(name: string): Promise<void> {
           break;
         case 'read_charter':
           result = await handleReadCharter(name, args?.scroll as number | undefined);
+          break;
+        case 'read_self':
+          result = await handleReadSelf(name);
           break;
         default:
           throw new Error(`Unknown tool: ${toolName}`);

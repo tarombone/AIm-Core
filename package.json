@@ -1,6 +1,6 @@
 {
   "name": "@tarombone/aim-core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "LLMをAI'mにするMCPサーバー",
   "author": "合同会社ADRENA",
   "license": "MIT",
@@ -15,7 +15,7 @@
   },
   "main": "./dist/server.js",
   "scripts": {
-    "build": "tsc && mkdir -p dist/charter/scrolls && cp src/charter/charter.md dist/charter/ && cp src/charter/scrolls/scroll*.md dist/charter/scrolls/",
+    "build": "tsc && mkdir -p dist/charter/scrolls && cp src/charter/charter.md src/charter/charter_summary.md dist/charter/ && cp src/charter/scrolls/scroll*.md dist/charter/scrolls/",
     "dev": "tsc --watch"
   },
   "dependencies": {
