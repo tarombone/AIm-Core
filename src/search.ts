@@ -28,8 +28,9 @@ function stripTrailingParticles(s: string): string {
 }
 
 export function tokenize(text: string): string[] {
-  // Pre-split on spaces and punctuation to help budoux
-  const parts = text.split(/[\s。、！？!?,…・\n\r\t「」『』【】（）()]/);
+  const normalized = text.replace(/([a-zA-Z0-9_])([^\sa-zA-Z0-9_.,!?])/g, '$1 $2')
+    .replace(/([^\sa-zA-Z0-9_.,!?])([a-zA-Z0-9_])/g, '$1 $2');
+  const parts = normalized.split(/[\s。、！？!?,…・\n\r\t「」『』【】（）()]/);
   const seen = new Set<string>();
   const tokens: string[] = [];
 
@@ -47,29 +48,20 @@ export function tokenize(text: string): string[] {
     for (const seg of segments) {
       const t = seg.trim();
       if (!t) continue;
-      add(t);
-      // Also add stripped version (remove trailing particles)
       const stripped = stripTrailingParticles(t);
-      if (stripped && stripped !== t) {
-        add(stripped);
-      }
+      add(stripped || t);
     }
   }
 
   return tokens;
 }
 
-export function computeTF(tokens: string[]): Map<string, number> {
+export function computeTF(tokens: string[]): { counts: Map<string, number>; length: number } {
   const counts = new Map<string, number>();
   for (const t of tokens) {
     counts.set(t, (counts.get(t) ?? 0) + 1);
   }
-  const tf = new Map<string, number>();
-  const total = tokens.length || 1;
-  for (const [term, count] of counts) {
-    tf.set(term, count / total);
-  }
-  return tf;
+  return { counts, length: tokens.length };
 }
 
 export function updateIndex(
@@ -79,20 +71,20 @@ export function updateIndex(
   content: string,
   createdAt: string
 ): void {
-  index.documents[filename] = { created_at: createdAt, topic };
-
   const tokens = tokenize(topic + ' ' + content);
-  const tf = computeTF(tokens);
+  const { counts, length } = computeTF(tokens);
 
-  for (const [term, tfScore] of tf) {
+  index.documents[filename] = { created_at: createdAt, topic, length };
+
+  for (const [term, count] of counts) {
     if (!index.index[term]) {
       index.index[term] = {};
     }
-    index.index[term][filename] = tfScore;
+    index.index[term][filename] = count;
   }
 }
 
-function recencyDecay(createdAt: string, halfLifeDays = 30): number {
+function recencyDecay(createdAt: string, halfLifeDays = 180): number {
   const ageDays = (Date.now() - new Date(createdAt).getTime()) / 86400000;
   return Math.pow(0.5, ageDays / halfLifeDays);
 }
@@ -111,8 +103,14 @@ export function search(
   const queryTokens = tokenize(query);
   if (queryTokens.length === 0) return [];
 
-  const totalDocs = Object.keys(index.documents).length;
+  const docs = index.documents;
+  const docNames = Object.keys(docs);
+  const totalDocs = docNames.length;
   if (totalDocs === 0) return [];
+
+  const avgDl = docNames.reduce((sum, d) => sum + (docs[d].length || 1), 0) / totalDocs;
+  const k1 = 1.2;
+  const b = 0.75;
 
   const scores = new Map<string, number>();
 
@@ -121,19 +119,21 @@ export function search(
     if (!posting) continue;
 
     const df = Object.keys(posting).length;
-    const idf = Math.log((totalDocs + 1) / (df + 1)) + 1;
+    const idf = Math.log((totalDocs - df + 0.5) / (df + 0.5) + 1);
 
-    for (const [filename, tf] of Object.entries(posting)) {
-      const doc = index.documents[filename];
+    for (const [filename, rawCount] of Object.entries(posting)) {
+      const doc = docs[filename];
+      const dl = doc?.length || 1;
+      const tf = (rawCount * (k1 + 1)) / (rawCount + k1 * (1 - b + b * dl / avgDl));
       const decay = doc ? recencyDecay(doc.created_at) : 1;
-      const score = tf * idf * decay;
+      const score = idf * tf * decay;
       scores.set(filename, (scores.get(filename) ?? 0) + score);
     }
   }
 
   const results: SearchResult[] = [];
   for (const [filename, score] of scores) {
-    const doc = index.documents[filename];
+    const doc = docs[filename];
     results.push({ filename, topic: doc?.topic ?? '', score });
   }
 

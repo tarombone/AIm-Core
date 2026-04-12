@@ -1,6 +1,9 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { getAimDir } from './identity.js';
+import { updateIndex } from './search.js';
+
+const CURRENT_INDEX_VERSION = '2';
 
 export interface MemoryEntry {
   topic: string;
@@ -14,6 +17,7 @@ export interface MemoryIndex {
     [filename: string]: {
       created_at: string;
       topic: string;
+      length: number;
     };
   };
   // Stores TF per term per document. IDF is computed at query time.
@@ -58,12 +62,34 @@ export async function saveMemory(
 
 export async function readMemoryIndex(name: string): Promise<MemoryIndex> {
   const dir = getAimDir(name);
+  let index: MemoryIndex;
   try {
     const data = await fs.readFile(path.join(dir, 'memory_index.json'), 'utf-8');
-    return JSON.parse(data) as MemoryIndex;
+    index = JSON.parse(data) as MemoryIndex;
   } catch {
-    return { version: '1', documents: {}, index: {} };
+    return { version: CURRENT_INDEX_VERSION, documents: {}, index: {} };
   }
+
+  if (index.version !== CURRENT_INDEX_VERSION) {
+    index = await rebuildIndex(name);
+    await writeMemoryIndex(name, index);
+  }
+
+  return index;
+}
+
+async function rebuildIndex(name: string): Promise<MemoryIndex> {
+  const index: MemoryIndex = { version: CURRENT_INDEX_VERSION, documents: {}, index: {} };
+  const files = await listMemoryFiles(name);
+  for (const filename of files) {
+    try {
+      const entry = await readMemoryFile(name, filename);
+      updateIndex(index, filename, entry.topic, entry.content, entry.created_at);
+    } catch {
+      // skip corrupted files
+    }
+  }
+  return index;
 }
 
 export async function writeMemoryIndex(name: string, index: MemoryIndex): Promise<void> {
