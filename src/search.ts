@@ -46,6 +46,24 @@ export function removeFromIndex(index: MemoryIndex, filename: string): void {
   }
 }
 
+// Find postings for a query keyword. Scans every index key and merges the
+// postings from those that contain the query keyword as a substring (exact
+// match is the special case of containing itself). This lets a short query
+// (e.g. "npm") surface memories both tagged exactly with "npm" AND those
+// whose keyword is a longer phrase containing "npm" (e.g. old migrated
+// memories that carry the topic string as their sole keyword).
+function findQueryPosting(index: MemoryIndex, keyword: string): string[] {
+  const merged = new Set<string>();
+  for (const k of Object.keys(index.index)) {
+    if (k.includes(keyword)) {
+      const posting = index.index[k];
+      if (!posting) continue;
+      for (const f of posting) merged.add(f);
+    }
+  }
+  return [...merged];
+}
+
 function depthDecay(depth: number): number {
   return Math.pow(DEPTH_DECAY_BASE, depth);
 }
@@ -72,8 +90,8 @@ export function expandKeywords(
   const candidates = new Map<string, number>();
 
   for (const qk of queryKeywords) {
-    const posting = index.index[qk];
-    if (!posting || posting.length === 0) continue;
+    const posting = findQueryPosting(index, qk);
+    if (posting.length === 0) continue;
     const postingSet = new Set(posting);
 
     for (const otherKey of Object.keys(index.index)) {
@@ -126,8 +144,12 @@ export function search(
   const contributors = new Map<string, Set<string>>();
 
   for (const [keyword, weight] of weights) {
-    const posting = index.index[keyword];
-    if (!posting) continue;
+    // Query keywords get substring-aware lookup; expanded keywords are always
+    // index keys themselves, so exact lookup is sufficient (and cheaper).
+    const posting = querySet.has(keyword)
+      ? findQueryPosting(index, keyword)
+      : index.index[keyword] ?? [];
+    if (posting.length === 0) continue;
     for (const filename of posting) {
       const doc = index.documents[filename];
       if (!doc) continue;
