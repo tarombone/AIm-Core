@@ -1,140 +1,159 @@
-import { loadDefaultJapaneseParser } from 'budoux';
-import type { MemoryIndex } from './memory.js';
-
-const parser = loadDefaultJapaneseParser();
-
-// Common Japanese particles and single-char function words to exclude
-const STOP_WORDS = new Set([
-  // Particles
-  'は', 'が', 'を', 'に', 'で', 'と', 'の', 'も', 'へ', 'か', 'な', 'ね', 'よ', 'わ', 'さ',
-  'から', 'まで', 'より', 'や', 'て',
-  // Auxiliary verbs / conjunctions
-  'し', 'い', 'う', 'た', 'だ', 'ない', 'ある', 'いる', 'する', 'なる', 'できる',
-  'です', 'ます', 'した', 'いた', 'でも', 'まし', 'でし', 'って', 'ため',
-  // Pronouns / demonstratives
-  'こと', 'もの', 'これ', 'それ', 'あれ', 'ここ', 'そこ', 'あそこ', 'どこ',
-  'この', 'その', 'あの', 'どの', 'という',
-]);
-
-// Trailing Japanese particles to strip from segments
-const TRAILING_PATTERN = /(から|まで|より|って|ても|では|には|ない|ます|です|した|いた|られ|させ|せる|てい)$/;
-const TRAILING_CHAR = /[はがをにでとものへかなよねわさたいう。、！？!?,.…]$/;
-
-function stripTrailingParticles(s: string): string {
-  let r = s.replace(TRAILING_PATTERN, '');
-  r = r.replace(TRAILING_CHAR, '');
-  r = r.replace(TRAILING_CHAR, ''); // run twice for cases like "行った。"
-  return r.trim();
-}
-
-export function tokenize(text: string): string[] {
-  const normalized = text.replace(/([a-zA-Z0-9_])([^\sa-zA-Z0-9_.,!?])/g, '$1 $2')
-    .replace(/([^\sa-zA-Z0-9_.,!?])([a-zA-Z0-9_])/g, '$1 $2');
-  const parts = normalized.split(/[\s。、！？!?,…・\n\r\t「」『』【】（）()]/);
-  const seen = new Set<string>();
-  const tokens: string[] = [];
-
-  function add(t: string) {
-    if (t.length >= 1 && !STOP_WORDS.has(t) && !seen.has(t)) {
-      seen.add(t);
-      tokens.push(t);
-    }
-  }
-
-  for (const part of parts) {
-    const trimmed = part.trim();
-    if (!trimmed) continue;
-    const segments = parser.parse(trimmed);
-    for (const seg of segments) {
-      const t = seg.trim();
-      if (!t) continue;
-      const stripped = stripTrailingParticles(t);
-      add(stripped || t);
-    }
-  }
-
-  return tokens;
-}
-
-export function computeTF(tokens: string[]): { counts: Map<string, number>; length: number } {
-  const counts = new Map<string, number>();
-  for (const t of tokens) {
-    counts.set(t, (counts.get(t) ?? 0) + 1);
-  }
-  return { counts, length: tokens.length };
-}
-
-export function updateIndex(
-  index: MemoryIndex,
-  filename: string,
-  topic: string,
-  content: string,
-  createdAt: string
-): void {
-  const tokens = tokenize(topic + ' ' + content);
-  const { counts, length } = computeTF(tokens);
-
-  index.documents[filename] = { created_at: createdAt, topic, length };
-
-  for (const [term, count] of counts) {
-    if (!index.index[term]) {
-      index.index[term] = {};
-    }
-    index.index[term][filename] = count;
-  }
-}
-
-function recencyDecay(createdAt: string, halfLifeDays = 180): number {
-  const ageDays = (Date.now() - new Date(createdAt).getTime()) / 86400000;
-  return Math.pow(0.5, ageDays / halfLifeDays);
-}
+import type { MemoryEntry, MemoryIndex } from './memory.js';
 
 export interface SearchResult {
   filename: string;
   topic: string;
+  keywords: string[];
+  depth: number;
+  origin: string;
   score: number;
+}
+
+const DEPTH_DECAY_BASE = 0.7;
+const RECENCY_HALF_LIFE_DAYS = 180;
+
+export function updateIndex(
+  index: MemoryIndex,
+  filename: string,
+  entry: MemoryEntry
+): void {
+  index.documents[filename] = {
+    created_at: entry.created_at,
+    topic: entry.topic,
+    keywords: entry.keywords,
+    depth: entry.depth,
+    origin: entry.origin,
+  };
+
+  for (const keyword of entry.keywords) {
+    if (!keyword) continue;
+    if (!index.index[keyword]) {
+      index.index[keyword] = [];
+    }
+    if (!index.index[keyword].includes(filename)) {
+      index.index[keyword].push(filename);
+    }
+  }
+}
+
+export function removeFromIndex(index: MemoryIndex, filename: string): void {
+  delete index.documents[filename];
+  for (const keyword of Object.keys(index.index)) {
+    index.index[keyword] = index.index[keyword].filter((f) => f !== filename);
+    if (index.index[keyword].length === 0) {
+      delete index.index[keyword];
+    }
+  }
+}
+
+function depthDecay(depth: number): number {
+  return Math.pow(DEPTH_DECAY_BASE, depth);
+}
+
+function recencyDecay(createdAt: string): number {
+  const ageDays = (Date.now() - new Date(createdAt).getTime()) / 86400000;
+  return Math.pow(0.5, ageDays / RECENCY_HALF_LIFE_DAYS);
+}
+
+// Given a query keyword set, find related keywords via Jaccard overlap of posting lists.
+// Returns a map keyword->weight (1.0 for direct match, <1.0 for expanded terms).
+export function expandKeywords(
+  index: MemoryIndex,
+  queryKeywords: string[],
+  expansionLimit = 5,
+  expandedWeight = 0.4
+): Map<string, number> {
+  const weights = new Map<string, number>();
+  for (const k of queryKeywords) {
+    if (k) weights.set(k, 1.0);
+  }
+
+  const querySet = new Set(queryKeywords);
+  const candidates = new Map<string, number>();
+
+  for (const qk of queryKeywords) {
+    const posting = index.index[qk];
+    if (!posting || posting.length === 0) continue;
+    const postingSet = new Set(posting);
+
+    for (const otherKey of Object.keys(index.index)) {
+      if (querySet.has(otherKey)) continue;
+      const other = index.index[otherKey];
+      if (!other || other.length === 0) continue;
+
+      let overlap = 0;
+      for (const f of other) {
+        if (postingSet.has(f)) overlap++;
+      }
+      if (overlap === 0) continue;
+
+      const union = postingSet.size + other.length - overlap;
+      const jaccard = overlap / union;
+      const current = candidates.get(otherKey) ?? 0;
+      if (jaccard > current) candidates.set(otherKey, jaccard);
+    }
+  }
+
+  const sorted = [...candidates.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, expansionLimit);
+  for (const [k, w] of sorted) {
+    weights.set(k, w * expandedWeight);
+  }
+
+  return weights;
 }
 
 export function search(
   index: MemoryIndex,
-  query: string,
-  topK = 5
+  queryKeywords: string[],
+  topK = 3,
+  options: {
+    expand?: boolean;
+    minIndirectContributors?: number;
+  } = {}
 ): SearchResult[] {
-  const queryTokens = tokenize(query);
-  if (queryTokens.length === 0) return [];
+  if (queryKeywords.length === 0) return [];
 
-  const docs = index.documents;
-  const docNames = Object.keys(docs);
-  const totalDocs = docNames.length;
-  if (totalDocs === 0) return [];
+  const { expand = true, minIndirectContributors = 2 } = options;
 
-  const avgDl = docNames.reduce((sum, d) => sum + (docs[d].length || 1), 0) / totalDocs;
-  const k1 = 1.2;
-  const b = 0.75;
+  const weights = expand
+    ? expandKeywords(index, queryKeywords)
+    : new Map(queryKeywords.filter((k) => k).map((k) => [k, 1.0]));
 
+  const querySet = new Set(queryKeywords.filter((k) => k));
   const scores = new Map<string, number>();
+  const contributors = new Map<string, Set<string>>();
 
-  for (const term of queryTokens) {
-    const posting = index.index[term];
+  for (const [keyword, weight] of weights) {
+    const posting = index.index[keyword];
     if (!posting) continue;
-
-    const df = Object.keys(posting).length;
-    const idf = Math.log((totalDocs - df + 0.5) / (df + 0.5) + 1);
-
-    for (const [filename, rawCount] of Object.entries(posting)) {
-      const doc = docs[filename];
-      const dl = doc?.length || 1;
-      const tf = (rawCount * (k1 + 1)) / (rawCount + k1 * (1 - b + b * dl / avgDl));
-      const decay = doc ? recencyDecay(doc.created_at) : 1;
-      const score = idf * tf * decay;
-      scores.set(filename, (scores.get(filename) ?? 0) + score);
+    for (const filename of posting) {
+      const doc = index.documents[filename];
+      if (!doc) continue;
+      const decay = depthDecay(doc.depth) * recencyDecay(doc.created_at);
+      scores.set(filename, (scores.get(filename) ?? 0) + weight * decay);
+      if (!contributors.has(filename)) contributors.set(filename, new Set());
+      contributors.get(filename)!.add(keyword);
     }
   }
 
+  // Filter: direct match always surfaces; indirect-only needs ≥ minIndirectContributors
+  // distinct contributing keywords.
   const results: SearchResult[] = [];
   for (const [filename, score] of scores) {
-    const doc = docs[filename];
-    results.push({ filename, topic: doc?.topic ?? '', score });
+    const doc = index.documents[filename];
+    const contribs = contributors.get(filename) ?? new Set<string>();
+    const hasDirect = [...contribs].some((k) => querySet.has(k));
+    if (!hasDirect && contribs.size < minIndirectContributors) continue;
+    results.push({
+      filename,
+      topic: doc.topic,
+      keywords: doc.keywords,
+      depth: doc.depth,
+      origin: doc.origin,
+      score,
+    });
   }
 
   return results.sort((a, b) => b.score - a.score).slice(0, topK);
